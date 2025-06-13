@@ -1,10 +1,15 @@
+require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
-require('dotenv').config();
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(express.json());
-app.use(require('cors')());
+app.use(cors());
+
+const JWT_SECRET = process.env.JWT_SECRET || 'mysecretkey';
 
 const pool = new Pool({
   user: process.env.PGUSER,
@@ -14,9 +19,53 @@ const pool = new Pool({
   port: process.env.PGPORT,
 });
 
-app.get('/api/status', async (req, res) => {
-  const result = await pool.query('SELECT NOW()');
-  res.json({ status: 'ok', time: result.rows[0].now });
+// РЕГИСТРАЦИЯ
+app.post('/api/register', async (req, res) => {
+  const { login, password } = req.body;
+  try {
+    const exists = await pool.query('SELECT * FROM users WHERE login = $1', [login]);
+    if (exists.rows.length > 0) {
+      return res.json({ success: false, message: 'Пользователь уже существует' });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    await pool.query('INSERT INTO users (login, password) VALUES ($1, $2)', [login, passwordHash]);
+    res.json({ success: true, login });
+  } catch (err) {
+    console.error('Ошибка регистрации:', err);
+    res.json({ success: false, message: 'Ошибка сервера: ' + err.message });
+  }
+});
+
+// ВХОД
+app.post('/api/login', async (req, res) => {
+  const { login, password } = req.body;
+  try {
+    const result = await pool.query('SELECT * FROM users WHERE login = $1', [login]);
+    if (result.rows.length === 1) {
+      const user = result.rows[0];
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      if (passwordMatch) {
+        const token = jwt.sign({ login: user.login, id: user.id }, JWT_SECRET, { expiresIn: '7d' });
+        return res.json({ success: true, login: user.login, token });
+      }
+    }
+    res.json({ success: false, message: 'Неверный логин или пароль' });
+  } catch (err) {
+    res.json({ success: false, message: 'Ошибка сервера: ' + err.message });
+  }
+});
+
+// Пример защищённого роутера (кабинет)
+app.get('/api/cabinet', (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    res.json({ message: `Привет, ${decoded.login}!`, user: decoded });
+  } catch {
+    res.status(401).json({ message: 'Неверный токен' });
+  }
 });
 
 app.listen(3001, () => console.log('Backend started on port 3001'));
