@@ -68,4 +68,47 @@ app.get('/api/cabinet', (req, res) => {
   }
 });
 
+
+// Получить профиль пользователя по токену
+app.get('/api/profile', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const result = await pool.query(
+      'SELECT login, lastname, firstname, middlename, email, role FROM users WHERE id = $1',
+      [decoded.id]
+    );
+    if (result.rows.length === 1) {
+      return res.json(result.rows[0]);
+    } else {
+      return res.status(404).json({ message: 'Пользователь не найден' });
+    }
+  } catch (err) {
+    return res.status(401).json({ message: 'Неверный токен', error: err.message });
+  }
+});
+
+// Обновить профиль пользователя по токену
+app.post('/api/profile', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    // Только эти поля можно обновлять пользователю (login и role — нет!)
+    const { lastname, firstname, middlename, email } = req.body;
+    await pool.query(
+      'UPDATE users SET lastname = $1, firstname = $2, middlename = $3, email = $4 WHERE id = $5',
+      [lastname || '', firstname || '', middlename || '', email || '', decoded.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(401).json({ success: false, message: 'Ошибка обновления', error: err.message });
+  }
+});
+
+
 app.listen(3001, () => console.log('Backend started on port 3001'));
