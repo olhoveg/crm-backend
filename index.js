@@ -128,23 +128,26 @@ app.get('/api/deals', async (req, res) => {
 });
 
 app.post('/api/deals', async (req, res) => {
-  const auth = req.headers.authorization;
-  if (!auth) return res.status(401).json({ message: 'Нет токена' });
   try {
-    const token = auth.split(' ')[1];
-    const decoded = jwt.verify(token, JWT_SECRET);
+    // Посмотри что реально приходит!
+    console.log('req.body:', req.body);
+
     const {
-      title, budget, status, comment, reason, lawyer, contract_number, service_type,
-      created_at, first_contact_at, reaction_time, nps, nps_comment
+      title, client_id, service_type, comment, status, desired_date
     } = req.body;
+
+    // Проверь порядок полей и переменных!
     const result = await pool.query(
-      `INSERT INTO deals (title, client_id, responsible_id, budget, status, comment, reason, lawyer, contract_number, service_type, created_at, first_contact_at, reaction_time, nps, nps_comment)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
-      [title, decoded.id, decoded.id, budget, status, comment, reason, lawyer, contract_number, service_type, created_at, first_contact_at, reaction_time, nps, nps_comment]
+      `INSERT INTO deals (
+        title, client_id, service_type, comment, status, desired_date
+      ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [title, client_id, service_type, comment, status, desired_date]
     );
-    res.json({ success: true, deal: result.rows[0] });
+
+    res.json(result.rows[0]);
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    console.error('Ошибка при создании сделки:', err);
+    res.status(500).json({ message: 'Ошибка при создании сделки', error: err.message });
   }
 });
 
@@ -195,5 +198,8 @@ app.post('/api/deals/:id/stage', async (req, res) => {
     res.status(400).json({ success: false, message: err.message });
   }
 });
+
+
+
 
 app.listen(3001, () => console.log('Backend started on port 3001'));
