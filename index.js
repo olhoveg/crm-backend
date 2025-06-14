@@ -110,5 +110,90 @@ app.post('/api/profile', async (req, res) => {
   }
 });
 
+app.get('/api/deals', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    // Показываем только сделки, связанные с этим пользователем
+    const result = await pool.query(
+      `SELECT * FROM deals WHERE client_id = $1 OR responsible_id = $1 ORDER BY created_at DESC`,
+      [decoded.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(401).json({ message: 'Ошибка авторизации', error: err.message });
+  }
+});
+
+app.post('/api/deals', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const {
+      title, budget, status, comment, reason, lawyer, contract_number, service_type,
+      created_at, first_contact_at, reaction_time, nps, nps_comment
+    } = req.body;
+    const result = await pool.query(
+      `INSERT INTO deals (title, client_id, responsible_id, budget, status, comment, reason, lawyer, contract_number, service_type, created_at, first_contact_at, reaction_time, nps, nps_comment)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+      [title, decoded.id, decoded.id, budget, status, comment, reason, lawyer, contract_number, service_type, created_at, first_contact_at, reaction_time, nps, nps_comment]
+    );
+    res.json({ success: true, deal: result.rows[0] });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/deals/:id', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    jwt.verify(token, JWT_SECRET); // Можно добавить проверку прав на просмотр
+    const result = await pool.query('SELECT * FROM deals WHERE id = $1', [req.params.id]);
+    if (result.rows.length) res.json(result.rows[0]);
+    else res.status(404).json({ message: 'Сделка не найдена' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+app.post('/api/deals/:id', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    jwt.verify(token, JWT_SECRET); // Можно добавить проверку прав на редактирование
+    const { title, budget, status, comment } = req.body;
+    const result = await pool.query(
+      `UPDATE deals SET title=$1, budget=$2, status=$3, comment=$4 WHERE id=$5 RETURNING *`,
+      [title, budget, status, comment, req.params.id]
+    );
+    res.json({ success: true, deal: result.rows[0] });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/deals/:id/stage', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  try {
+    const token = auth.split(' ')[1];
+    jwt.verify(token, JWT_SECRET);
+    const { stage } = req.body;
+    const result = await pool.query(
+      `UPDATE deals SET stage = $1 WHERE id = $2 RETURNING *`,
+      [stage, req.params.id]
+    );
+    res.json({ success: true, deal: result.rows[0] });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+});
 
 app.listen(3001, () => console.log('Backend started on port 3001'));
