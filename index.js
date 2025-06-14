@@ -140,9 +140,9 @@ app.post('/api/deals', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO deals (
   title, client_id, responsible_id, budget, status, comment, reason, lawyer,
-  contract_number, service_type, desired_date, first_contact_at, reaction_time, nps, nps_comment
+  contract_number, service_type, created_at, desired_date, first_contact_at, reaction_time, nps, nps_comment
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), $11, $12, $13, $14, $15
 ) RETURNING *`,
       [title, client_id, service_type, comment, status, desired_date]
     );
