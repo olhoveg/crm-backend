@@ -21,14 +21,22 @@ const pool = new Pool({
 
 // РЕГИСТРАЦИЯ
 app.post('/api/register', async (req, res) => {
-  const { login, password } = req.body;
+  const { login, password, role } = req.body;
+  // Разрешённые роли
+  const allowedRoles = ['client', 'specialist', 'admin'];
+  if (!allowedRoles.includes(role)) {
+    return res.json({ success: false, message: 'Неверная роль регистрации' });
+  }
   try {
     const exists = await pool.query('SELECT * FROM users WHERE login = $1', [login]);
     if (exists.rows.length > 0) {
       return res.json({ success: false, message: 'Пользователь уже существует' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    await pool.query('INSERT INTO users (login, password) VALUES ($1, $2)', [login, passwordHash]);
+    await pool.query(
+      'INSERT INTO users (login, password, role) VALUES ($1, $2, $3)',
+      [login, passwordHash, role]
+    );
     res.json({ success: true, login });
   } catch (err) {
     console.error('Ошибка регистрации:', err);
@@ -46,8 +54,7 @@ app.post('/api/login', async (req, res) => {
       const passwordMatch = await bcrypt.compare(password, user.password);
       if (passwordMatch) {
         const token = jwt.sign({ login: user.login, id: user.id }, JWT_SECRET, { expiresIn: '7d' });
-        return res.json({ success: true, login: user.login, token });
-      }
+return res.json({ success: true, login: user.login, token, role: user.role });      }
     }
     res.json({ success: false, message: 'Неверный логин или пароль' });
   } catch (err) {
@@ -112,39 +119,84 @@ app.post('/api/profile', async (req, res) => {
 
 app.get('/api/deals', async (req, res) => {
   const auth = req.headers.authorization;
-  if (!auth) return res.status(401).json({ message: 'Нет токена' });
+  if (!auth) {
+    return res.status(401).json({ message: 'Нет токена' });
+  }
   try {
     const token = auth.split(' ')[1];
     const decoded = jwt.verify(token, JWT_SECRET);
-    // Показываем только сделки, связанные с этим пользователем
-    const result = await pool.query(
-      `SELECT * FROM deals WHERE client_id = $1 OR responsible_id = $1 ORDER BY created_at DESC`,
+
+    // Узнаём роль текущего пользователя
+    const userResult = await pool.query(
+      'SELECT role FROM users WHERE id = $1',
       [decoded.id]
     );
+    const role = userResult.rows[0]?.role || null;
+
+    let result;
+    if (role === 'client') {
+      // Клиент видит только свои сделки
+      result = await pool.query(
+        `SELECT * 
+           FROM deals 
+          WHERE client_id = $1 
+             OR responsible_id = $1 
+       ORDER BY created_at DESC`,
+        [decoded.id]
+      );
+    } else {
+      // Специалист и админ видят все сделки
+      result = await pool.query(
+        `SELECT * 
+           FROM deals 
+       ORDER BY created_at DESC`
+      );
+    }
+
     res.json(result.rows);
   } catch (err) {
-    res.status(401).json({ message: 'Ошибка авторизации', error: err.message });
+    return res.status(401).json({ message: 'Ошибка авторизации', error: err.message });
   }
 });
 
 app.post('/api/deals', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth) return res.status(401).json({ message: 'Нет токена' });
   try {
-    // Посмотри что реально приходит!
-    console.log('req.body:', req.body);
+    const token = auth.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    // id пользователя из токена — это и есть client_id
+    const client_id = decoded.id;
 
     const {
-      title, client_id, service_type, comment, status, desired_date
+      title,
+      budget = null,
+      status = null,
+      comment = null,
+      reason = null,
+      lawyer = null,
+      contract_number = null,
+      service_type = null,
+      specialist_type = null,
+      desired_date = null,
+      first_contact_at = null,
+      reaction_time = null,
+      nps = null,
+      nps_comment = null,
+      responsible_id = null // если понадобится назначать вручную
     } = req.body;
 
-    // Проверь порядок полей и переменных!
     const result = await pool.query(
       `INSERT INTO deals (
-  title, client_id, responsible_id, budget, status, comment, reason, lawyer,
-  contract_number, service_type, created_at, desired_date, first_contact_at, reaction_time, nps, nps_comment
-) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), $11, $12, $13, $14, $15
-) RETURNING *`,
-      [title, client_id, service_type, comment, status, desired_date]
+        title, client_id, responsible_id, budget, status, comment, reason, lawyer,
+        contract_number, service_type, specialist_type, created_at, desired_date, first_contact_at, reaction_time, nps, nps_comment
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12, $13, $14, $15, $16
+      ) RETURNING *`,
+      [
+        title, client_id, responsible_id, budget, status, comment, reason, lawyer,
+        contract_number, service_type, specialist_type, desired_date, first_contact_at, reaction_time, nps, nps_comment
+      ]
     );
 
     res.json(result.rows[0]);
@@ -169,16 +221,20 @@ app.get('/api/deals/:id', async (req, res) => {
 });
 
 app.post('/api/deals/:id', async (req, res) => {
+  console.log('=== ОБНОВЛЕНИЕ СДЕЛКИ ===');
+  console.log('params.id:', req.params.id);
+  console.log('body:', req.body);
   const auth = req.headers.authorization;
   if (!auth) return res.status(401).json({ message: 'Нет токена' });
   try {
     const token = auth.split(' ')[1];
     jwt.verify(token, JWT_SECRET); // Можно добавить проверку прав на редактирование
-    const { title, budget, status, comment } = req.body;
-    const result = await pool.query(
-      `UPDATE deals SET title=$1, budget=$2, status=$3, comment=$4 WHERE id=$5 RETURNING *`,
-      [title, budget, status, comment, req.params.id]
-    );
+    const { title, budget, status, comment, responsible_id } = req.body;
+const result = await pool.query(
+  `UPDATE deals SET title=$1, budget=$2, status=$3, comment=$4, responsible_id=$5 WHERE id=$6 RETURNING *`,
+  [title, budget, status, comment, responsible_id, req.params.id]
+);
+    console.log('Результат обновления:', result.rows[0]);
     res.json({ success: true, deal: result.rows[0] });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -204,5 +260,41 @@ app.post('/api/deals/:id/stage', async (req, res) => {
 
 
 
+
+// Получить всех пользователей по роли (например, специалистов)
+app.get('/api/users', async (req, res) => {
+  const role = req.query.role;
+  if (!role) {
+    return res.status(400).json({ message: 'Не указана роль' });
+  }
+  try {
+    const result = await pool.query(
+      'SELECT id, login, lastname, firstname, middlename, email, role FROM users WHERE role = $1 ORDER BY lastname, firstname',
+      [role]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Ошибка при загрузке пользователей', error: err.message });
+  }
+});
+
+// Получить услуги по specialist_type (например, /api/services?type=юрист)
+app.get('/api/services', async (req, res) => {
+  try {
+    const { type } = req.query;
+    let result;
+    if (type) {
+      result = await pool.query(
+        'SELECT id, name FROM services WHERE specialist_type = $1 ORDER BY name',
+        [type]
+      );
+    } else {
+      result = await pool.query('SELECT id, name FROM services ORDER BY name');
+    }
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Ошибка при загрузке услуг', error: err.message });
+  }
+});
 
 app.listen(3001, () => console.log('Backend started on port 3001'));
